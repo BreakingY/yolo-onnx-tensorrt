@@ -18,7 +18,7 @@ def letterbox_resize(img, new_shape=(input_h, input_w), color=(114, 114, 114)):
     dh /= 2
 
     img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
-    #防止四舍五入边界偏差
+    # 防止四舍五入边界偏差
     # dh = 4.5
     # round(dh - 0.1) = round(4.4) = 4
     # round(dh + 0.1) = round(4.6) = 5
