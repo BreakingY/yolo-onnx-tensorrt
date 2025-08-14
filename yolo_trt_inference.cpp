@@ -90,6 +90,7 @@ std::tuple<float, float, float>  PreprocessImage(std::string path, void *buffer,
     float &dh = std::get<3>(res);
     // cv::imwrite("output.jpg", res_mat);
     cv::Mat img_float;
+    cv::cvtColor(res_mat, res_mat, cv::COLOR_BGR2RGB); // 如果颜色通道顺序不对，模型检测精度会下降很多
     res_mat.convertTo(img_float, CV_32FC3, 1.f / 255.0);
 
     // HWC TO CHW
