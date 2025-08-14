@@ -3,7 +3,7 @@
 from ultralytics import YOLO
 
 def train():
-    model = YOLO('yolov11s.pt')  # 使用官方预训练模型
+    model = YOLO('yolov11.pt')  # 使用官方预训练模型
 
     results = model.train(
         data='./data.yaml',
