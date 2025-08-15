@@ -10,7 +10,7 @@
 #include <opencv2/opencv.hpp>
 #include <npp.h>
 #include "NvInfer.h"
-#define PREPARE_GPU
+#define PROC_GPU
 #ifndef CUDA_CHECK
 #define CUDA_CHECK(callstr)\
     {\
@@ -415,7 +415,7 @@ int main(int argc, char **argv){
     int buffer_idx = 0;
     char* input_ptr = static_cast<char*>(buffers[input_index]);
     for(int i = 0; i < test_batch; i++){
-#ifdef PREPARE_GPU
+#ifdef PROC_GPU
         std::tuple<float, float, float> res = PreprocessImage_GPU(img_path, input_ptr + buffer_idx, channel, input_h, input_w, stream);
 #else
         std::tuple<float, float, float> res = PreprocessImage(img_path, input_ptr + buffer_idx, channel, input_h, input_w, stream);
