@@ -3,12 +3,12 @@ CXX := g++
 CXXFLAGS := -g -std=c++17 \
             -I/data/sunkx/TensorRT-8.5.1.7/include \
             -I/usr/local/cuda/include \
-            -I/usr/local/opencvgpu/include/opencv4
+            -I/usr/local/include/opencv4
 
 
 LDFLAGS := -L/data/sunkx/TensorRT-8.5.1.7/lib \
            -L/usr/local/cuda/lib64 \
-           -L/usr/local/opencvgpu/lib
+           -L/usr/local/lib
 
 
 LDLIBS := -lnvinfer -lcudart \

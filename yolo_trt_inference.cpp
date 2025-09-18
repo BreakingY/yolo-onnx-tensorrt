@@ -175,6 +175,7 @@ std::tuple<float, float, float>  PreprocessImage_GPU(std::string path, void *buf
     CUDA_CHECK(cudaMalloc(&img_buffer, orig_h * orig_w * 3));
     void *img_ptr = img.data;
     CUDA_CHECK(cudaMemcpyAsync(img_buffer, img_ptr, orig_h * orig_w * 3, cudaMemcpyHostToDevice, stream));
+    cudaStreamSynchronize(stream);
     std::tuple<float, float, float> res = Letterbox_resize_GPU(orig_h, orig_w, img_buffer, buffer, input_h, input_w);
 
     float &r = std::get<0>(res);
