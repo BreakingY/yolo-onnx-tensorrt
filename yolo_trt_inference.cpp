@@ -7,6 +7,7 @@
 #include <cstring>
 #include <tuple>
 #include <cmath>
+#include <thread>
 #include <opencv2/opencv.hpp>
 #include <npp.h>
 #include "NvInfer.h"
@@ -424,7 +425,14 @@ int main(int argc, char **argv){
         buffer_idx += input_h * input_w * 3 * sizeof(float);
         res_pre.push_back(res);
     }
-    Inference(context, buffers, (void*)output, one_output_len, res_pre.size(), channel, input_h, input_w, input_index, output_index, stream);
+    int fps_test_cnt = 10000;
+    auto start = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < fps_test_cnt; i++){
+        Inference(context, buffers, (void*)output, one_output_len, res_pre.size(), channel, input_h, input_w, input_index, output_index, stream);
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    long long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::cout << "fps: " << (double)(fps_test_cnt * test_batch) / ((double)duration / 1000) << " time: " << duration << "ms" << std::endl;
     cv::Mat original = cv::imread(img_path);
     int orig_h = original.rows, orig_w = original.cols;
 

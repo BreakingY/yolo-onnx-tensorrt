@@ -211,4 +211,4 @@ if __name__ == "__main__":
         if detections.shape[0] > 0:
             detections = scale_coords(detections, r, dw, dh, raw_img.shape[:2])
             draw(raw_img, detections)
-        cv2.imwrite(f'result_{i+1}.jpg', raw_img)
+        cv2.imwrite(f'result_{i}.jpg', raw_img)
