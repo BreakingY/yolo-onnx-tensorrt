@@ -1,12 +1,12 @@
 # Makefile for yolo_trt_inference
 CXX := g++
 CXXFLAGS := -g -std=c++17 \
-            -I/data/sunkx/TensorRT-8.5.1.7/include \
+            -I/data/sunkx/TensorRT-10.4.0.26/include \
             -I/usr/local/cuda/include \
             -I/usr/local/include/opencv4
 
 
-LDFLAGS := -L/data/sunkx/TensorRT-8.5.1.7/lib \
+LDFLAGS := -L/data/sunkx/TensorRT-10.4.0.26/lib \
            -L/usr/local/cuda/lib64 \
            -L/usr/local/lib
 

@@ -13,6 +13,7 @@
 #include "NvInfer.h"
 #define PROC_GPU
 #ifndef CUDA_CHECK
+// #define OLD_API
 #define CUDA_CHECK(callstr)\
     {\
         cudaError_t error_code = callstr;\
@@ -224,16 +225,6 @@ std::tuple<float, float, float>  PreprocessImage_GPU(std::string path, void *buf
     CUDA_CHECK(cudaFree(pu8_rgb));
     return std::move(std::make_tuple(r, dw, dh));
 }
-int Inference(nvinfer1::IExecutionContext* context, void** buffers, void* output, int one_output_len, const int batch_size, int channel, int input_h, int input_w, int input_index, int output_index, cudaStream_t stream){
-    context->setBindingDimensions(0, nvinfer1::Dims4(batch_size, channel, input_h, input_w));
-    if(!context->enqueueV2(buffers, stream, nullptr)) {
-        std::cerr << "enqueueV2 failed!" << std::endl;
-        return -2;
-    }
-    CUDA_CHECK(cudaMemcpyAsync(output, buffers[output_index], batch_size * one_output_len * sizeof(float), cudaMemcpyDeviceToHost, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-    return 0;
-}
 static float IoU(const cv::Rect2f& a, const cv::Rect2f& b) {
     float inter = (a & b).area();
     float uni = a.area() + b.area() - inter;
@@ -329,6 +320,19 @@ static std::vector<Detection> PostprocessDetections(
     for (int idx : keep) out.push_back(dets[idx]);
     return out;
 }
+#ifdef OLD_API
+// old API
+// test version TensorRT-8.5.1.7
+int Inference(nvinfer1::IExecutionContext* context, void** buffers, void* output, int one_output_len, const int batch_size, int channel, int input_h, int input_w, int input_index, int output_index, cudaStream_t stream){
+    context->setBindingDimensions(0, nvinfer1::Dims4(batch_size, channel, input_h, input_w));
+    if(!context->enqueueV2(buffers, stream, nullptr)) {
+        std::cerr << "enqueueV2 failed!" << std::endl;
+        return -2;
+    }
+    CUDA_CHECK(cudaMemcpyAsync(output, buffers[output_index], batch_size * one_output_len * sizeof(float), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    return 0;
+}
 int main(int argc, char **argv){
     if(argc < 3){
         std::cerr << "./bin eng_path test.jpg" << std::endl;
@@ -377,6 +381,29 @@ int main(int argc, char **argv){
     
     int input_index = engine->getBindingIndex(input_names[0]);
 	int output_index = engine->getBindingIndex(output_names[0]);
+    nvinfer1::DataType images_type = engine->getBindingDataType(input_index);
+    if (images_type == nvinfer1::DataType::kINT32) {
+        std::cout << "images 类型为 int32" << std::endl;
+    } 
+    // 8.5.1.7 have not kINT64
+    // else if (images_type == nvinfer1::DataType::kINT64) {
+    //     std::cout << "images 类型为 int64" << std::endl;
+    // } 
+    else if (images_type == nvinfer1::DataType::kFLOAT) {
+        std::cout << "images 类型为 float" << std::endl;
+    }
+
+    nvinfer1::DataType output_type = engine->getBindingDataType(output_index);
+    if (output_type == nvinfer1::DataType::kINT32) {
+        std::cout << "output 类型为 int32" << std::endl;
+    } 
+    // 8.5.1.7 have not kINT64
+    // else if (output_type == nvinfer1::DataType::kINT64) {
+    //     std::cout << "output 类型为 int64" << std::endl;
+    // } 
+    else if (output_type == nvinfer1::DataType::kFLOAT) {
+        std::cout << "output 类型为 float" << std::endl;
+    }
 
     // int batch_size = engine->getBindingDimensions(input_index).d[0]; // 动态维度返回-1
     int batch_size = 4; // trtexex转模型设置的最大batch
@@ -470,3 +497,206 @@ int main(int argc, char **argv){
     engine->destroy();
     return 0;
 }
+#else
+// new API
+// test version TensorRT-10.4.0.26
+int Inference(nvinfer1::IExecutionContext* context, void** buffers, void* output, int one_output_len, const int batch_size, int channel, int input_h, int input_w, 
+                std::vector<std::pair<int, std::string>> in_tensor_info, std::vector<std::pair<int, std::string>> out_tensor_info, cudaStream_t stream){
+    nvinfer1::Dims trt_in_dims{};
+    trt_in_dims.nbDims = 4;
+    trt_in_dims.d[0] = batch_size;
+    trt_in_dims.d[1] = channel;
+    trt_in_dims.d[2] = input_h;
+    trt_in_dims.d[3] = input_w;
+    context->setInputShape(in_tensor_info[0].second.c_str(), trt_in_dims);
+    if(!context->enqueueV3(stream)) {
+        std::cerr << "enqueueV3 failed!" << std::endl;
+        return -2;
+    }
+    CUDA_CHECK(cudaMemcpyAsync(output, buffers[out_tensor_info[0].first], batch_size * one_output_len * sizeof(float), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    return 0;
+}
+size_t CountElement(const nvinfer1::Dims &dims, int batch_zise)
+{
+    int64_t total = batch_zise;
+    for (int32_t i = 1; i < dims.nbDims; ++i){
+        total *= dims.d[i];
+    }
+    return static_cast<size_t>(total);
+}
+int main(int argc, char **argv){
+    if(argc < 3){
+        std::cerr << "./bin eng_path test.jpg" << std::endl;
+        return 0;
+    }
+    const char *eng_path = argv[1];
+    const char *img_path = argv[2];
+    int device_id = 0;
+    cudaStream_t stream;
+    CUDA_CHECK(cudaSetDevice(device_id));
+    CUDA_CHECK(cudaStreamCreate(&stream));
+    nvinfer1::IRuntime* runtime = nvinfer1::createInferRuntime(logger);
+	assert(runtime != nullptr);
+    int model_size = 0;
+    char *trt_model_stream = ReadFromPath(eng_path,model_size);
+    assert(trt_model_stream != nullptr);
+
+    auto engine{runtime->deserializeCudaEngine(trt_model_stream, model_size)};
+	assert(engine != nullptr);
+
+    auto context{engine->createExecutionContext()};
+	assert(context != nullptr);
+    delete []trt_model_stream;
+
+    int num_bindings = engine->getNbIOTensors();
+	std::cout << "input/output : " << num_bindings << std::endl;
+	std::vector<std::pair<int, std::string>> in_tensor_info;
+	std::vector<std::pair<int, std::string>> out_tensor_info;
+    for (int i = 0; i < num_bindings; ++i)
+    {
+        const char *tensor_name = engine->getIOTensorName(i);
+        nvinfer1::TensorIOMode io_mode = engine->getTensorIOMode(tensor_name);
+        if (io_mode == nvinfer1::TensorIOMode::kINPUT)
+            in_tensor_info.push_back({i, std::string(tensor_name)});
+        else if (io_mode == nvinfer1::TensorIOMode::kOUTPUT)
+            out_tensor_info.push_back({i, std::string(tensor_name)});
+    }
+    for(int idx = 0; idx < in_tensor_info.size(); idx++){
+        nvinfer1::Dims in_dims=context->getTensorShape(in_tensor_info[idx].second.c_str());
+        std::cout << "input: " << in_tensor_info[idx].second.c_str() << std::endl;
+        for(int i = 0; i < in_dims.nbDims; i++){
+            std::cout << "dims [" << i << "]: " << in_dims.d[i] << std::endl;
+        }
+        nvinfer1::DataType size_type = engine->getTensorDataType(in_tensor_info[idx].second.c_str());
+        if (size_type == nvinfer1::DataType::kINT32) {
+            std::cout << "类型为 int32" << std::endl;
+        } 
+        else if (size_type == nvinfer1::DataType::kINT64) {
+            std::cout << "类型为 int64" << std::endl;
+        } 
+        else if (size_type == nvinfer1::DataType::kFLOAT) {
+            std::cout << "类型为 float" << std::endl;
+        }
+        std::cout << std::endl;
+    }
+    for(int idx = 0; idx < out_tensor_info.size(); idx++){
+        nvinfer1::Dims out_dims=context->getTensorShape(out_tensor_info[idx].second.c_str());
+        std::cout << "output: " << out_tensor_info[idx].second.c_str() << std::endl;
+        for(int i = 0; i < out_dims.nbDims; i++){
+            std::cout << "dims [" << i << "]: " << out_dims.d[i] << std::endl;
+        }
+        nvinfer1::DataType size_type = engine->getTensorDataType(out_tensor_info[idx].second.c_str());
+        if (size_type == nvinfer1::DataType::kINT32) {
+            std::cout << "类型为 int32" << std::endl;
+        } 
+        else if (size_type == nvinfer1::DataType::kINT64) {
+            std::cout << "类型为 int64" << std::endl;
+        } 
+        else if (size_type == nvinfer1::DataType::kFLOAT) {
+            std::cout << "类型为 float" << std::endl;
+        }
+        std::cout << std::endl;
+    }
+    assert(in_tensor_info.size() == 1);
+    assert(out_tensor_info.size() == 1);
+    
+
+    int batch_size = 4; // trtexex转模型设置的最大batch
+    nvinfer1::Dims in_dims = context->getTensorShape(in_tensor_info[0].second.c_str());
+    nvinfer1::Dims out_dims = context->getTensorShape(out_tensor_info[0].second.c_str());
+    size_t max_in_size_byte = CountElement(in_dims, batch_size) * sizeof(float); // batch_size * input_h * input_w * 3 * sizeof(float)
+    size_t max_out_size_byte = CountElement(out_dims, batch_size) * sizeof(float); // batch_size * one_output_len * sizeof(float)
+    // in_dims.d[0] dynamic batch_size == -1 
+    int channel = in_dims.d[1];
+    assert(channel == 3);
+    int input_h = in_dims.d[2];
+	int input_w = in_dims.d[3];
+    std::cout << "batch_size:" << batch_size << " channel:" << channel << " input_h:" << input_h << " input_w:" << input_w << std::endl;
+
+    int output_pred = out_dims.d[1]; // 4(c_x, c_y, w, h) + len(class_names)
+	int anchors = out_dims.d[2]; // 3 个特征图融合后的总 anchor 数量
+	// 计算 YOLO 模型输出的预测框数量
+    // input_h, input_w: 模型输入的高度和宽度
+    // YOLO 会在 3 个尺度进行预测：
+    //   1. 下采样 8 倍 (P3 层)，特征图尺寸为 (input_h / 8) × (input_w / 8)
+    //   2. 下采样 16 倍 (P4 层)，特征图尺寸为 (input_h / 16) × (input_w / 16)
+    //   3. 下采样 32 倍 (P5 层)，特征图尺寸为 (input_h / 32) × (input_w / 32)
+    // 每个特征图位置会预测 3 个 anchor 框
+    int anchors_model = (
+        (input_h / 8)  * (input_w / 8)  +  // 尺度1 (stride=8)
+        (input_h / 16) * (input_w / 16) +  // 尺度2 (stride=16)
+        (input_h / 32) * (input_w / 32)    // 尺度3 (stride=32)
+    ) * 3; // 每个位置 3 个 anchor
+    if(anchors != anchors_model){
+        if(anchors_model != anchors * 3)
+            std::cout << "anchors " << anchors << "anchors_model" << anchors_model << std::endl;
+    }
+    std::cout << "output_pred:" << output_pred << " anchors:" << anchors << std::endl;
+
+    void* buffers[2] = {NULL, NULL};
+    CUDA_CHECK(cudaMalloc(&buffers[in_tensor_info[0].first], max_in_size_byte));
+    int one_output_len = output_pred * anchors;
+	CUDA_CHECK(cudaMalloc(&buffers[out_tensor_info[0].first], max_out_size_byte));
+    float* output = new float[max_out_size_byte];
+    // set in/out tensor address
+    context->setInputTensorAddress(in_tensor_info[0].second.c_str(), buffers[in_tensor_info[0].first]);
+    context->setOutputTensorAddress(out_tensor_info[0].second.c_str(), buffers[out_tensor_info[0].first]);
+
+    int test_batch = 2;
+    std::vector<std::tuple<float, float, float>> res_pre;
+    int buffer_idx = 0;
+    char* input_ptr = static_cast<char*>(buffers[in_tensor_info[0].first]);
+    for(int i = 0; i < test_batch; i++){
+#ifdef PROC_GPU
+        std::tuple<float, float, float> res = PreprocessImage_GPU(img_path, input_ptr + buffer_idx, channel, input_h, input_w, stream);
+#else
+        std::tuple<float, float, float> res = PreprocessImage(img_path, input_ptr + buffer_idx, channel, input_h, input_w, stream);
+#endif
+        buffer_idx += input_h * input_w * 3 * sizeof(float);
+        res_pre.push_back(res);
+    }
+    int fps_test_cnt = 10000;
+    auto start = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < fps_test_cnt; i++){
+        Inference(context, buffers, (void*)output, one_output_len, res_pre.size(), channel, input_h, input_w, in_tensor_info, out_tensor_info, stream);
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    long long duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::cout << "fps: " << (double)(fps_test_cnt * test_batch) / ((double)duration / 1000) << " time: " << duration << "ms" << std::endl;
+    cv::Mat original = cv::imread(img_path);
+    int orig_h = original.rows, orig_w = original.cols;
+
+    for (int b = 0; b < test_batch; ++b) {
+        auto [r, dw, dh] = res_pre[b];
+        float* feat_b = output + b * one_output_len;
+
+        std::vector<Detection> dets = PostprocessDetections(
+            feat_b, output_pred, anchors, r, dw, dh, orig_w, orig_h, /*conf*/0.5f, /*iou*/0.5f);
+
+        cv::Mat vis = original.clone();
+        for (const auto& d : dets) {
+            cv::rectangle(vis, d.box, cv::Scalar(0, 255, 0), 2);
+            char text[128];
+            const char* cname = (d.class_id >= 0 && d.class_id < (int)(sizeof(class_names)/sizeof(class_names[0])))
+                                    ? class_names[d.class_id] : "cls";
+            snprintf(text, sizeof(text), "%s: %.2f", cname, d.score);
+            int baseline = 0;
+            cv::Size tsize = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+            cv::rectangle(vis, cv::Rect(cv::Point((int)d.box.x, (int)d.box.y - tsize.height - 4),
+                                        cv::Size(tsize.width + 4, tsize.height + 4)),
+                        cv::Scalar(0, 255, 0), cv::FILLED);
+            cv::putText(vis, text, cv::Point((int)d.box.x + 2, (int)d.box.y - 2),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 1);
+        }
+        std::string save_name = std::string("result_") + std::to_string(b) + ".jpg";
+        cv::imwrite(save_name, vis);
+        std::cout << "Saved: " << save_name << "  dets=" << dets.size() << std::endl;
+    }
+    CUDA_CHECK(cudaFree(buffers[0]));
+    CUDA_CHECK(cudaFree(buffers[1]));
+    delete []output;
+    CUDA_CHECK(cudaStreamDestroy(stream));
+    return 0;
+}
+#endif
