@@ -11,11 +11,13 @@
 #include <opencv2/opencv.hpp>
 #include <npp.h>
 #include "NvInfer.h"
-#include "ByteTrack/BYTETracker.h"
 #define PROC_GPU
 #ifndef CUDA_CHECK
 // #define OLD_API
 #define TRACK
+#ifdef TRACK
+#include "ByteTrack/BYTETracker.h"
+#endif
 #define CUDA_CHECK(callstr)\
     {\
         cudaError_t error_code = callstr;\
