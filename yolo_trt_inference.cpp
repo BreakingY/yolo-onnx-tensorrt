@@ -640,11 +640,9 @@ int VideoInfer(cudaStream_t &stream, std::vector<std::pair<int, std::string>> &i
                 feat_b, output_pred, anchors, r, dw, dh, orig_w, orig_h, /*conf*/0.5f, /*iou*/0.5f);
 #ifdef TRACK
             std::vector<byte_track::Object> objects;
-            int label = 0;
             for (auto& d : dets) {
-                label ++;
                 d.track_id = 0;
-                byte_track::Object object(byte_track::Rect(d.box.x, d.box.y, d.box.width, d.box.height), label, d.score);
+                byte_track::Object object(byte_track::Rect(d.box.x, d.box.y, d.box.width, d.box.height), d.class_id, d.score);
                 objects.push_back(object);
             }
             const std::vector<byte_track::BYTETracker::STrackPtr> outputs = tracker.update(objects);
