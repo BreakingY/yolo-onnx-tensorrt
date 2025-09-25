@@ -11,9 +11,11 @@
 #include <opencv2/opencv.hpp>
 #include <npp.h>
 #include "NvInfer.h"
+#include "ByteTrack/BYTETracker.h"
 #define PROC_GPU
 #ifndef CUDA_CHECK
 // #define OLD_API
+#define TRACK
 #define CUDA_CHECK(callstr)\
     {\
         cudaError_t error_code = callstr;\
@@ -27,6 +29,7 @@ struct Detection {
     cv::Rect2f box;   // x, y, w, h  (左上角坐标 + 宽高)
     float score;      // 置信度
     int class_id;     // 类别索引
+    int track_id;
 };
 const char *class_names[2] = {"dog", "person"};
 class Logger: public nvinfer1::ILogger{
@@ -308,6 +311,7 @@ static std::vector<Detection> PostprocessDetections(
         d.box = cv::Rect2f(x, y, ww, hh);
         d.score = best_s;
         d.class_id = best_c;
+        d.track_id = -1;
         dets.push_back(d);
     }
 
@@ -594,6 +598,11 @@ int VideoInfer(cudaStream_t &stream, std::vector<std::pair<int, std::string>> &i
     bool ready_flag = false;
     const char* save_name = "output.mp4";
     bool over_flag = false;
+    double fps = cap.get(cv::CAP_PROP_FPS);
+    std::cout << "FPS: " << fps << std::endl;
+#ifdef TRACK
+    byte_track::BYTETracker tracker(fps, fps * 2);
+#endif
     while(!over_flag){
         std::vector<std::tuple<float, float, float>> res_pre;
         int buffer_idx = 0;
@@ -629,14 +638,37 @@ int VideoInfer(cudaStream_t &stream, std::vector<std::pair<int, std::string>> &i
 
             std::vector<Detection> dets = PostprocessDetections(
                 feat_b, output_pred, anchors, r, dw, dh, orig_w, orig_h, /*conf*/0.5f, /*iou*/0.5f);
-
+#ifdef TRACK
+            std::vector<byte_track::Object> objects;
+            int label = 0;
+            for (const auto& d : dets) {
+                label ++;
+                byte_track::Object object(byte_track::Rect(d.box.x, d.box.y, d.box.width, d.box.height), label, d.score);
+                objects.push_back(object);
+            }
+            const std::vector<byte_track::BYTETracker::STrackPtr> outputs = tracker.update(objects);
+            for (const auto &outputs_per_frame : outputs)
+            {
+                const byte_track::Rect<float> &rect = outputs_per_frame->getRect();
+                const size_t &track_id = outputs_per_frame->getTrackId();
+                for (auto& d : dets) {
+                    d.track_id = 0;
+                    cv::Rect2f rect_original = d.box;
+                    float iou = IoU(rect_original, cv::Rect2f(rect.x(), rect.y(), rect.width(), rect.height()));
+                    if(iou  > 0.3){
+                        d.track_id = track_id;
+                        break;
+                    }
+                }
+            }
+#endif
             cv::Mat vis = original.clone();
             for (const auto& d : dets) {
                 cv::rectangle(vis, d.box, cv::Scalar(0, 255, 0), 2);
                 char text[128];
                 const char* cname = (d.class_id >= 0 && d.class_id < (int)(sizeof(class_names)/sizeof(class_names[0])))
                                         ? class_names[d.class_id] : "cls";
-                snprintf(text, sizeof(text), "%s: %.2f", cname, d.score);
+                snprintf(text, sizeof(text), "%s: %.2f <%d>", cname, d.score, d.track_id);
                 int baseline = 0;
                 cv::Size tsize = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
                 cv::rectangle(vis, cv::Rect(cv::Point((int)d.box.x, (int)d.box.y - tsize.height - 4),

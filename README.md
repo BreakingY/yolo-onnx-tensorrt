@@ -1,5 +1,6 @@
 # yolo-onnx-tensorrt
 * git clone --recursive https://github.com/BreakingY/yolo-onnx-tensorrt.git
+* apt-get install libeigen3-dev (for track)
 # Prepare
 * pip install ultralytics
 # Train
