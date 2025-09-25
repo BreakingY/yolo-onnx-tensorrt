@@ -641,24 +641,33 @@ int VideoInfer(cudaStream_t &stream, std::vector<std::pair<int, std::string>> &i
 #ifdef TRACK
             std::vector<byte_track::Object> objects;
             int label = 0;
-            for (const auto& d : dets) {
+            for (auto& d : dets) {
                 label ++;
+                d.track_id = 0;
                 byte_track::Object object(byte_track::Rect(d.box.x, d.box.y, d.box.width, d.box.height), label, d.score);
                 objects.push_back(object);
             }
             const std::vector<byte_track::BYTETracker::STrackPtr> outputs = tracker.update(objects);
-            for (const auto &outputs_per_frame : outputs)
-            {
+            std::vector<int> allocate_idx;
+            for(int k = 0; k < outputs.size(); k++){
+                const auto &outputs_per_frame = outputs[k];
                 const byte_track::Rect<float> &rect = outputs_per_frame->getRect();
                 const size_t &track_id = outputs_per_frame->getTrackId();
-                for (auto& d : dets) {
-                    d.track_id = 0;
-                    cv::Rect2f rect_original = d.box;
+                float max_iou = 0.0f;
+                int best_match_idx = -1;
+                for (size_t i = 0; i < dets.size(); ++i) {
+                    if(dets[i].track_id != 0) 
+                        continue;
+                    cv::Rect2f rect_original = dets[i].box;
                     float iou = IoU(rect_original, cv::Rect2f(rect.x(), rect.y(), rect.width(), rect.height()));
-                    if(iou  > 0.3){
-                        d.track_id = track_id;
-                        break;
+                    if(iou > max_iou && iou > 0.3f){
+                        max_iou = iou;
+                        best_match_idx = i;
                     }
+                }
+                if((best_match_idx != -1) && (std::find(allocate_idx.begin(), allocate_idx.end(), k) == allocate_idx.end())){
+                    allocate_idx.push_back(k);
+                    dets[best_match_idx].track_id = track_id;
                 }
             }
 #endif
