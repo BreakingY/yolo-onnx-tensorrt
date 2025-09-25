@@ -1,4 +1,5 @@
 # yolo-onnx-tensorrt
+* git clone --recursive https://github.com/BreakingY/yolo-onnx-tensorrt.git
 # Prepare
 * pip install ultralytics
 # Train
